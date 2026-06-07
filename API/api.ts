@@ -25,29 +25,26 @@ export function makeApi(
   });
 
   const req = async <T = any>(
-    method: string,
-    path: string,
-    body?: unknown
-  ): Promise<T> => {
-    const res = await fetch(`${baseUrl}${path}`, {
-      method,
-      headers: headers(),
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    const json = await res.json();
-    if (!res.ok) {
-      if (
-        (res.status === 401 || res.status === 403) &&
-        !SKIP_UNAUTH_PATHS.some((p) => path.startsWith(p))
-      ) {
-        opts.onUnauthorized?.();
-      }
-      throw new Error(
-        json?.errors?.[0]?.message || json?.message || "Request failed"
-      );
-    }
-    return json;
-  };
+  method: string,
+  path: string,
+  body?: unknown
+): Promise<T> => {
+  const res = await fetch(`${baseUrl}${path}`, {
+    method,
+    headers: headers(),
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  // 204 No Content (e.g. DELETE) — no body to parse
+  if (res.status === 204) return undefined as T;
+
+  const json = await res.json();
+  if (!res.ok)
+    throw new Error(
+      json?.errors?.[0]?.message || json?.message || "Request failed"
+    );
+  return json;
+};
 
   return {
     // ── Auth ──────────────────────────────────────────────────────────────
