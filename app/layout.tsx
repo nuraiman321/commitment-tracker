@@ -53,8 +53,8 @@ export default function RootLayout({
                 rel="noopener noreferrer"
                 target="_blank"
               >
-                <span className="text-muted">Powered by</span>
-                <p className="text-accent">HeroUI</p>
+                {/* <span className="text-muted">Powered by</span>
+                <p className="text-accent">HeroUI</p> */}
               </a>
             </footer>
           </div>

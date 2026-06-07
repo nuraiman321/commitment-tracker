@@ -5,7 +5,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState } from "react";
 import { Commitment, CommitmentForm, CommitmentFieldErrors } from "../types";
-import { btn, mono, CMT_COLORS, labelStyle } from "../lib/utils";
+import {
+  btn, mono, CMT_COLORS, labelStyle,
+  todayISO, formatLastDate, monthsLeft, fmt,
+} from "../lib/utils";
 
 interface CommitmentModalProps {
   item: Commitment | null;
@@ -23,21 +26,45 @@ export default function CommitmentModal({
   const [form, setForm] = useState<CommitmentForm>(
     item
       ? { ...item, color: item.color || "#e76f51" }
-      : { name: "", amount: "", months: "", paid: "", color: "#e76f51" }
+      : { name: "", amount: "", last_date: "", color: "#e76f51" }
   );
   const [err, setErr] = useState<CommitmentFieldErrors>({});
 
   const set = <K extends keyof CommitmentForm>(k: K, v: CommitmentForm[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
 
+  // Preview calculated values from the picked date
+  const previewMonths = form.last_date
+    ? (() => {
+        const end = new Date(form.last_date);
+        const now = new Date();
+        const diff =
+          (end.getFullYear() - now.getFullYear()) * 12 +
+          (end.getMonth() - now.getMonth());
+        return Math.max(diff, 0);
+      })()
+    : null;
+
+  const previewTotal =
+    previewMonths !== null && form.amount
+      ? Number(form.amount) * previewMonths
+      : null;
+
   const validate = (): boolean => {
     const e: CommitmentFieldErrors = {};
-    if (!String(form.name).trim())                   e.name   = "Required";
-    if (!form.amount || Number(form.amount) <= 0)    e.amount = "Enter a valid amount";
-    if (!form.months || Number(form.months) < 1)     e.months = "Enter total months";
-    if (Number(form.paid) < 0)                       e.paid   = "Cannot be negative";
-    if (parseInt(String(form.paid)) > parseInt(String(form.months)))
-                                                     e.paid   = "Paid > total months";
+    if (!String(form.name).trim())              e.name      = "Required";
+    if (!form.amount || Number(form.amount) <= 0) e.amount  = "Enter a valid amount";
+    if (!form.last_date)                         e.last_date = "Pick a last payment date";
+    else {
+      const end = new Date(form.last_date);
+      const now = new Date();
+      if (
+        end.getFullYear() < now.getFullYear() ||
+        (end.getFullYear() === now.getFullYear() && end.getMonth() < now.getMonth())
+      ) {
+        // allow past dates (already completed commitments) — just no error
+      }
+    }
     setErr(e);
     return Object.keys(e).length === 0;
   };
@@ -47,17 +74,8 @@ export default function CommitmentModal({
     onSave({
       ...form,
       amount: parseFloat(String(form.amount)),
-      months: parseInt(String(form.months)),
-      paid:   parseInt(String(form.paid)) || 0,
     });
   };
-
-  const fields: Array<[string, keyof CommitmentFieldErrors, string, string]> = [
-    ["Name",          "name",   "text",   "e.g. Car Loan"],
-    ["Monthly (RM)",  "amount", "number", "e.g. 650"],
-    ["Total Months",  "months", "number", "e.g. 60"],
-    ["Months Paid",   "paid",   "number", "e.g. 12"],
-  ];
 
   return (
     <div
@@ -76,56 +94,113 @@ export default function CommitmentModal({
           animation: "slideUp .2s ease",
         }}
       >
-        <p style={{ ...labelStyle, marginBottom: 16 }}>
+        <p style={{ ...labelStyle, marginBottom: 18 }}>
           {item ? "Edit" : "New"} Commitment
         </p>
 
-        {fields.map(([label, key, type, ph]) => (
-          <div key={key} style={{ marginBottom: 14 }}>
-            <p
-              style={{
-                fontSize: 10,
-                color: err[key] ? "#e76f51" : "#444",
-                marginBottom: 4,
-                letterSpacing: 1,
-                textTransform: "uppercase",
-              }}
-            >
-              {label}
-              {err[key] ? ` — ${err[key]}` : ""}
-            </p>
-            <input
-              type={type}
-              placeholder={ph}
-              value={form[key] as string | number}
-              onChange={(e) => {
-                set(key, e.target.value);
-                setErr((er) => ({ ...er, [key]: undefined }));
-              }}
-              style={{
-                width: "100%",
-                background: "#0a0a0a",
-                border: `1px solid ${err[key] ? "#e76f51" : "#1e1e1e"}`,
-                borderRadius: 6,
-                color: "#f0ede8",
-                fontSize: 13,
-                padding: "9px 12px",
-                boxSizing: "border-box",
-                fontFamily: mono,
-                outline: "none",
-              }}
-            />
+        {/* Name */}
+        <div style={{ marginBottom: 14 }}>
+          <p style={{
+            fontSize: 10, color: err.name ? "#e76f51" : "#444",
+            marginBottom: 4, letterSpacing: 1, textTransform: "uppercase",
+          }}>
+            Name{err.name ? ` — ${err.name}` : ""}
+          </p>
+          <input
+            type="text"
+            placeholder="e.g. Car Loan"
+            value={form.name}
+            onChange={(e) => { set("name", e.target.value); setErr((er) => ({ ...er, name: undefined })); }}
+            style={{
+              width: "100%", background: "#0a0a0a",
+              border: `1px solid ${err.name ? "#e76f51" : "#1e1e1e"}`,
+              borderRadius: 6, color: "#f0ede8", fontSize: 13,
+              padding: "9px 12px", boxSizing: "border-box",
+              fontFamily: mono, outline: "none",
+            }}
+          />
+        </div>
+
+        {/* Monthly Amount */}
+        <div style={{ marginBottom: 14 }}>
+          <p style={{
+            fontSize: 10, color: err.amount ? "#e76f51" : "#444",
+            marginBottom: 4, letterSpacing: 1, textTransform: "uppercase",
+          }}>
+            Monthly (RM){err.amount ? ` — ${err.amount}` : ""}
+          </p>
+          <input
+            type="number"
+            placeholder="e.g. 650"
+            value={form.amount}
+            onChange={(e) => { set("amount", e.target.value); setErr((er) => ({ ...er, amount: undefined })); }}
+            style={{
+              width: "100%", background: "#0a0a0a",
+              border: `1px solid ${err.amount ? "#e76f51" : "#1e1e1e"}`,
+              borderRadius: 6, color: "#f0ede8", fontSize: 13,
+              padding: "9px 12px", boxSizing: "border-box",
+              fontFamily: mono, outline: "none",
+            }}
+          />
+        </div>
+
+        {/* Last Payment Date */}
+        <div style={{ marginBottom: 14 }}>
+          <p style={{
+            fontSize: 10, color: err.last_date ? "#e76f51" : "#444",
+            marginBottom: 4, letterSpacing: 1, textTransform: "uppercase",
+          }}>
+            Last Payment Date{err.last_date ? ` — ${err.last_date}` : ""}
+          </p>
+          <input
+            type="date"
+            value={form.last_date}
+            onChange={(e) => { set("last_date", e.target.value); setErr((er) => ({ ...er, last_date: undefined })); }}
+            style={{
+              width: "100%", background: "#0a0a0a",
+              border: `1px solid ${err.last_date ? "#e76f51" : "#1e1e1e"}`,
+              borderRadius: 6, color: form.last_date ? "#f0ede8" : "#555",
+              fontSize: 13, padding: "9px 12px", boxSizing: "border-box",
+              fontFamily: mono, outline: "none", colorScheme: "dark",
+            }}
+          />
+          <p style={{ fontSize: 9, color: "#333", marginTop: 4, letterSpacing: .5 }}>
+            Pick the month of your final payment
+          </p>
+        </div>
+
+        {/* Live preview */}
+        {previewMonths !== null && (
+          <div style={{
+            background: "#0a0a0a", border: "1px solid #1a1a1a",
+            borderRadius: 8, padding: "10px 12px", marginBottom: 16,
+            display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8,
+          }}>
+            <div>
+              <p style={{ fontSize: 9, color: "#333", letterSpacing: 1, textTransform: "uppercase", marginBottom: 2 }}>
+                Months Left
+              </p>
+              <p style={{ fontSize: 13, color: previewMonths === 0 ? "#2a9d8f" : "#e9c46a", fontWeight: 500 }}>
+                {previewMonths === 0 ? "Completed" : `${previewMonths} mo`}
+              </p>
+            </div>
+            <div>
+              <p style={{ fontSize: 9, color: "#333", letterSpacing: 1, textTransform: "uppercase", marginBottom: 2 }}>
+                Total Balance
+              </p>
+              <p style={{ fontSize: 13, color: "#f0ede8", fontWeight: 500 }}>
+                {previewTotal !== null ? fmt(previewTotal) : "—"}
+              </p>
+            </div>
           </div>
-        ))}
+        )}
 
         {/* Color picker */}
         <div style={{ marginBottom: 20 }}>
-          <p
-            style={{
-              fontSize: 10, color: "#444", marginBottom: 8,
-              letterSpacing: 1, textTransform: "uppercase",
-            }}
-          >
+          <p style={{
+            fontSize: 10, color: "#444", marginBottom: 8,
+            letterSpacing: 1, textTransform: "uppercase",
+          }}>
             Color
           </p>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

@@ -55,16 +55,19 @@ export function PieChart({
   salary: number;
   totalCommit: number;
 }) {
-  const pct = salary > 0 ? Math.min(totalCommit / salary, 1) : 0;
-  const r = 52, cx = 70, cy = 70;
-  const circ = 2 * Math.PI * r;
+const safeSalary      = Number.isFinite(salary) && salary > 0 ? salary : 0;
+const safeTotalCommit = Number.isFinite(totalCommit) && totalCommit >= 0 ? totalCommit : 0;
+const pct  = safeSalary > 0 ? Math.min(safeTotalCommit / safeSalary, 1) : 0;
+const r = 52, cx = 70, cy = 70;
+const circ = 2 * Math.PI * r;
+const dash = Number.isFinite(pct * circ) ? pct * circ : 0;
 
   return (
     <svg width="140" height="140" viewBox="0 0 140 140">
       <circle cx={cx} cy={cy} r={r} fill="none" stroke="#1a1a1a" strokeWidth="18" />
       <circle
         cx={cx} cy={cy} r={r} fill="none" stroke="#e76f51" strokeWidth="18"
-        strokeDasharray={`${pct * circ} ${circ}`}
+        strokeDasharray={`${dash} ${circ}`}
         strokeDashoffset={circ * 0.25}
         strokeLinecap="round"
         style={{ transition: "stroke-dasharray .6s cubic-bezier(.4,0,.2,1)" }}
@@ -73,7 +76,7 @@ export function PieChart({
         x={cx} y={cy - 6} textAnchor="middle"
         fill="#f0ede8" fontSize="13" fontFamily={mono} fontWeight="600"
       >
-        {Math.round(pct * 100)}%
+        {safeSalary > 0 ? `${Math.round(pct * 100)}%` : "—"}
       </text>
       <text x={cx} y={cy + 10} textAnchor="middle" fill="#555" fontSize="9" fontFamily={mono}>
         commit

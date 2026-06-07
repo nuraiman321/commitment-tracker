@@ -12,17 +12,15 @@ export type Commitment = {
   id: number | string;
   name: string;
   amount: number;
-  months: number;
-  paid: number;
+  last_date: string;   // "YYYY-MM-DD" — replaces months + paid
   color?: string;
 };
-
+ 
 export type CommitmentForm = {
   id?: number | string;
   name: string;
   amount: number | string;
-  months: number | string;
-  paid: number | string;
+  last_date: string;   // date picker value
   color: string;
 };
 
@@ -53,7 +51,7 @@ export type ToastState = { msg: string; type: "ok" | "err" } | null;
 export type ModalState = Commitment | "add" | null;
 
 export type CommitmentFieldErrors = Partial<
-  Record<"name" | "amount" | "months" | "paid", string | undefined>
+  Record<"name" | "amount" | "last_date", string | undefined>
 >;
 export type LoginErrors = Partial<{
   email: string;
