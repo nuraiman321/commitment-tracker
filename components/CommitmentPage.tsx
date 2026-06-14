@@ -9,7 +9,7 @@ import { ApiClient } from "../API/api";
 import {
   monthsLeft, totalLeft, fmt, errMsg,
   useDebounce, btn, mono, sans, labelStyle,
-  formatLastDate, isCompleted,
+  formatLastDate, isCompleted, SUB_COLOR,
 } from "../lib/utils";
 import { Toast, PieChart, ProgressBar, Spinner } from "./ui";
 import CommitmentModal from "./CommitmentModal";
@@ -48,15 +48,16 @@ function Projection({
             {Array.from({ length: 12 }, (_, m) => {
               const d = new Date();
               d.setMonth(d.getMonth() + m);
-              const projYear = d.getFullYear();
+              const projYear  = d.getFullYear();
               const projMonth = d.getMonth();
-
-              const label = d.toLocaleString("en-MY", { month: "short", year: "2-digit" });
+              const label     = d.toLocaleString("en-MY", { month: "short", year: "2-digit" });
 
               const total = commitments.reduce((s: number, c: Commitment) => {
+                // Subscriptions are always active every month
+                if (c.is_subscription) return s + c.amount;
                 if (!c.last_date) return s;
-                const end = new Date(c.last_date);
-                const endYear = end.getFullYear();
+                const end      = new Date(c.last_date);
+                const endYear  = end.getFullYear();
                 const endMonth = end.getMonth();
                 const isActive =
                   endYear > projYear ||
@@ -93,15 +94,15 @@ interface CommitmentPageProps {
 
 export default function CommitmentPage({ api, onBack }: CommitmentPageProps) {
   const [commitments, setCommitments] = useState<Commitment[]>([]);
-  const [salary, setSalary] = useState<number>(0);
-  const [profileId, setProfileId] = useState<number | string | null>(null);
-  const [userId, setUserId] = useState<number | string | null>(null);
-  const [dataLoad, setDataLoad] = useState(true);
-  const [modal, setModal] = useState<ModalState>(null);
-  const [saving, setSaving] = useState(false);
-  const [delId, setDelId] = useState<number | string | null>(null);
-  const [showProj, setShowProj] = useState(false);
-  const [toast, setToast] = useState<ToastState>(null);
+  const [salary,      setSalary]      = useState<number>(0);
+  const [profileId,   setProfileId]   = useState<number | string | null>(null);
+  const [userId,      setUserId]      = useState<number | string | null>(null);
+  const [dataLoad,    setDataLoad]    = useState(true);
+  const [modal,       setModal]       = useState<ModalState>(null);
+  const [saving,      setSaving]      = useState(false);
+  const [delId,       setDelId]       = useState<number | string | null>(null);
+  const [showProj,    setShowProj]    = useState(false);
+  const [toast,       setToast]       = useState<ToastState>(null);
 
   const notify = (msg: string, type: "ok" | "err" = "ok") => setToast({ msg, type });
 
@@ -121,16 +122,14 @@ export default function CommitmentPage({ api, onBack }: CommitmentPageProps) {
       setCommitments(
         (cmtRes.data || []).map((c: any) => ({
           ...c,
-          amount: Number(c.amount) || 0,
+          amount:          Number(c.amount) || 0,
+          is_subscription: Boolean(c.is_subscription),
         })) as Commitment[]
       );
 
       const prof = profRes.data?.[0];
-      console.log("profile loaded:", prof);        // ← add this temporarily
-      console.log("salary value:", prof?.salary);  // ← and this
-
       if (prof) {
-        setSalary(Number(prof.salary) || 0);       // ← force Number() cast
+        setSalary(Number(prof.salary) || 0);
         setProfileId(prof.id);
       }
     } catch (e) {
@@ -163,18 +162,22 @@ export default function CommitmentPage({ api, onBack }: CommitmentPageProps) {
     setSaving(true);
     try {
       const payload: Partial<Commitment> = {
-        name: String(form.name),
-        amount: Number(form.amount),
-        last_date: form.last_date,
-        color: form.color,
+        name:            String(form.name),
+        amount:          Number(form.amount),
+        last_date:       form.is_subscription ? undefined : form.last_date,
+        is_subscription: form.is_subscription,
+        color:           form.color,
       };
       if (form.id) {
         const res = await api.updateCommitment(form.id, payload);
-        setCommitments((cs) => cs.map((c) => c.id === form.id ? (res.data as Commitment) : c));
+        setCommitments((cs) =>
+          cs.map((c) => c.id === form.id ? { ...res.data as Commitment, amount: Number((res.data as any).amount) || 0, is_subscription: Boolean((res.data as any).is_subscription) } : c)
+        );
         notify("Updated ✓");
       } else {
         const res = await api.createCommitment(payload);
-        setCommitments((cs) => [res.data as Commitment, ...cs]);
+        const newItem = { ...res.data as Commitment, amount: Number((res.data as any).amount) || 0, is_subscription: Boolean((res.data as any).is_subscription) };
+        setCommitments((cs) => [newItem, ...cs]);
         notify("Commitment added ✓");
       }
       setModal(null);
@@ -199,33 +202,44 @@ export default function CommitmentPage({ api, onBack }: CommitmentPageProps) {
   };
 
   // ── Derived values ────────────────────────────────────────────────────────
-const totalCommit = useMemo(
-  () => commitments
-    .filter((c) => !isCompleted(c))
-    .reduce((s, c) => s + (Number(c.amount) || 0), 0),
-  [commitments]
-);
+  // Subscriptions are always active; fixed-end only if not completed
+  const totalCommit = useMemo(
+    () => commitments
+      .filter((c) => c.is_subscription || !isCompleted(c))
+      .reduce((s, c) => s + (Number(c.amount) || 0), 0),
+    [commitments]
+  );
 
-  const safeSalary = Number.isFinite(salary) && salary > 0 ? salary : 0;
-  const remaining = safeSalary - totalCommit;
-  const pct = safeSalary > 0 ? Math.round((totalCommit / safeSalary) * 100) : 0;
+  const safeSalary = useMemo(
+    () => (Number.isFinite(salary) && salary > 0 ? salary : 0),
+    [salary]
+  );
+  const remaining = useMemo(() => safeSalary - totalCommit, [safeSalary, totalCommit]);
+  const pct       = useMemo(
+    () => safeSalary > 0 ? Math.round((totalCommit / safeSalary) * 100) : 0,
+    [safeSalary, totalCommit]
+  );
 
   const summaryStats: Array<[string, string, string]> = [
-    ["Commit", fmt(totalCommit), "#e76f51"],
-    ["Left", fmt(remaining), remaining >= 0 ? "#2a9d8f" : "#e76f51"],
-    ["Ratio", safeSalary > 0 ? `${pct}%` : "—", pct > 70 ? "#e76f51" : "#e9c46a"],
+    ["Commit", fmt(totalCommit),                  "#e76f51"],
+    ["Left",   fmt(remaining),                    remaining >= 0 ? "#2a9d8f" : "#e76f51"],
+    ["Ratio",  safeSalary > 0 ? `${pct}%` : "—", pct > 70 ? "#e76f51" : "#e9c46a"],
     [
       "Health",
       safeSalary === 0 ? "Set salary"
-        : pct <= 50 ? "✓ Healthy"
-          : pct <= 70 ? "⚠ Watch"
-            : "✗ Critical",
+        : pct <= 50    ? "✓ Healthy"
+        : pct <= 70    ? "⚠ Watch"
+        :                "✗ Critical",
       safeSalary === 0 ? "#444"
-        : pct <= 50 ? "#2a9d8f"
-          : pct <= 70 ? "#e9c46a"
-            : "#e76f51",
+        : pct <= 50    ? "#2a9d8f"
+        : pct <= 70    ? "#e9c46a"
+        :                "#e76f51",
     ],
   ];
+
+  // Counts for list header
+  const completedCount    = commitments.filter(isCompleted).length;
+  const subscriptionCount = commitments.filter((c) => c.is_subscription).length;
 
   return (
     <div style={{ minHeight: "100vh", background: "#0a0a0a", fontFamily: sans, color: "#f0ede8" }}>
@@ -297,11 +311,18 @@ const totalCommit = useMemo(
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 28, marginBottom: 14 }}>
             <div>
               <p style={labelStyle}>Commitments · {commitments.length}</p>
-              {commitments.some(isCompleted) && (
-                <p style={{ fontSize: 9, color: "#2a9d8f", fontFamily: mono, marginTop: 2 }}>
-                  {commitments.filter(isCompleted).length} completed
-                </p>
-              )}
+              <div style={{ display: "flex", gap: 10, marginTop: 2 }}>
+                {completedCount > 0 && (
+                  <p style={{ fontSize: 9, color: "#2a9d8f", fontFamily: mono }}>
+                    {completedCount} completed
+                  </p>
+                )}
+                {subscriptionCount > 0 && (
+                  <p style={{ fontSize: 9, color: SUB_COLOR, fontFamily: mono }}>
+                    {subscriptionCount} subscription{subscriptionCount > 1 ? "s" : ""}
+                  </p>
+                )}
+              </div>
             </div>
             <button onClick={() => setModal("add")} style={btn("#e76f51", "#fff")}>+ Add</button>
           </div>
@@ -322,37 +343,54 @@ const totalCommit = useMemo(
           {/* ── Commitment cards ── */}
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {commitments.map((c, i) => {
-              const done = isCompleted(c);
-              const rem = monthsLeft(c);
-              const isDel = delId === c.id;
-              const accentColor = done ? "#2a9d8f" : (c.color || "#e76f51");
+              const done           = isCompleted(c);
+              const isSub          = c.is_subscription;
+              const rem            = monthsLeft(c);
+              const isDel          = delId === c.id;
 
-              // Progress bar: how far through the commitment.
-              // We only have last_date, not start date, so we show months-left
-              // as a countdown — 0 left = bar full.
-              const paidPct = done
-                ? 100
-                : (() => {
-                  // total months from today to last_date
-                  const end = new Date(c.last_date);
-                  const now = new Date();
-                  const full = Math.max(
-                    (end.getFullYear() - now.getFullYear()) * 12 +
-                    (end.getMonth() - now.getMonth()),
-                    1
-                  );
-                  // bar fills as months pass — starts near 0, reaches 100 at last month
-                  // We invert: show (full - rem) / full * 100
-                  return Math.max(0, Math.min(100, ((full - rem) / full) * 100));
-                })();
+              // Color logic: subscription = purple, completed = green, active = own color
+              const cardAccent = isSub
+                ? SUB_COLOR
+                : done
+                  ? "#2a9d8f"
+                  : (c.color || "#e76f51");
+
+              const cardBg = isSub
+                ? "#0d0814"
+                : done
+                  ? "#081a13"
+                  : "#0e0e0e";
+
+              const cardBorder = isSub
+                ? "#1a0d2e"
+                : done
+                  ? "#0f2a1e"
+                  : "#141414";
+
+              // Progress bar value
+              const paidPct = isSub
+                ? 100  // subscriptions show full pulsing bar
+                : done
+                  ? 100
+                  : (() => {
+                      if (!c.last_date) return 0;
+                      const end  = new Date(c.last_date);
+                      const now  = new Date();
+                      const full = Math.max(
+                        (end.getFullYear() - now.getFullYear()) * 12 +
+                        (end.getMonth() - now.getMonth()),
+                        1
+                      );
+                      return Math.max(0, Math.min(100, ((full - rem) / full) * 100));
+                    })();
 
               return (
                 <div
                   key={c.id}
                   style={{
-                    background: done ? "#081a13" : "#0e0e0e",
-                    border: `1px solid ${done ? "#0f2a1e" : "#141414"}`,
-                    borderLeft: `3px solid ${accentColor}`,
+                    background: cardBg,
+                    border: `1px solid ${cardBorder}`,
+                    borderLeft: `3px solid ${cardAccent}`,
                     borderRadius: 10, padding: "14px 16px",
                     opacity: isDel ? 0.4 : 1,
                     transition: "opacity .2s, border-color .4s, background .4s",
@@ -363,10 +401,23 @@ const totalCommit = useMemo(
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
                     <div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
-                        <p style={{ fontWeight: 600, fontSize: 14, color: done ? "#2a9d8f" : "#f0ede8" }}>
+                        <p style={{ fontWeight: 600, fontSize: 14, color: isSub ? SUB_COLOR : done ? "#2a9d8f" : "#f0ede8" }}>
                           {c.name}
                         </p>
-                        {done && (
+
+                        {/* SUB badge */}
+                        {isSub && (
+                          <span style={{
+                            fontSize: 9, color: SUB_COLOR, background: "#120a1a",
+                            border: `1px solid ${SUB_COLOR}44`, borderRadius: 4,
+                            padding: "1px 6px", fontFamily: mono, letterSpacing: 1,
+                          }}>
+                            ∞ SUB
+                          </span>
+                        )}
+
+                        {/* DONE badge — only for non-subscription */}
+                        {done && !isSub && (
                           <span style={{
                             fontSize: 9, color: "#2a9d8f", background: "#0f2a1e",
                             border: "1px solid #2a9d8f33", borderRadius: 4,
@@ -376,28 +427,57 @@ const totalCommit = useMemo(
                           </span>
                         )}
                       </div>
-                      {/* Until date taken from last_date */}
-                      <p style={{ fontSize: 10, color: done ? "#2a9d8f88" : "#444", fontFamily: mono }}>
-                        {done
-                          ? `Completed ${formatLastDate(c.last_date)}`
-                          : `Until ${formatLastDate(c.last_date)} · ${rem} mo left`}
+
+                      {/* Subtitle — until date or subscription label */}
+                      <p style={{ fontSize: 10, fontFamily: mono,
+                        color: isSub ? `${SUB_COLOR}88` : done ? "#2a9d8f88" : "#444" }}>
+                        {isSub
+                          ? "∞ Ongoing · no end date"
+                          : done
+                            ? `Completed ${formatLastDate(c.last_date)}`
+                            : `Until ${formatLastDate(c.last_date)} · ${rem} mo left`}
                       </p>
                     </div>
+
                     <div style={{ textAlign: "right" }}>
-                      <p style={{ fontSize: 16, fontFamily: mono, fontWeight: 500, color: accentColor }}>
+                      <p style={{ fontSize: 16, fontFamily: mono, fontWeight: 500, color: cardAccent }}>
                         {fmt(c.amount)}
                       </p>
-                      <p style={{ fontSize: 9, color: done ? "#2a9d8f66" : "#333", fontFamily: mono }}>/mo</p>
+                      <p style={{ fontSize: 9, fontFamily: mono,
+                        color: isSub ? `${SUB_COLOR}66` : done ? "#2a9d8f66" : "#333" }}>/mo</p>
                     </div>
                   </div>
 
-                  {/* Progress bar */}
-                  <ProgressBar paid={paidPct} months={100} color={accentColor} />
+                  {/* Progress bar — pulsing for subscriptions */}
+                  <div style={{ position: "relative" }}>
+                    <ProgressBar paid={paidPct} months={100} color={cardAccent} />
+                    {isSub && (
+                      <div style={{
+                        position: "absolute", inset: 0,
+                        background: `linear-gradient(90deg, transparent, ${SUB_COLOR}44, transparent)`,
+                        animation: "subPulse 2s ease infinite",
+                        borderRadius: 2,
+                      }}/>
+                    )}
+                  </div>
 
                   {/* Bottom row */}
-                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: 7, fontSize: 10, fontFamily: mono, color: done ? "#2a9d8f66" : "#333" }}>
-                    <span>{done ? "All payments complete" : `${rem} mo remaining`}</span>
-                    <span>{done ? "—" : `Balance ${fmt(totalLeft(c))}`}</span>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: 7, fontSize: 10, fontFamily: mono,
+                    color: isSub ? `${SUB_COLOR}66` : done ? "#2a9d8f66" : "#333" }}>
+                    <span>
+                      {isSub
+                        ? `${fmt(c.amount * 12)} / year`
+                        : done
+                          ? "All payments complete"
+                          : `${rem} mo remaining`}
+                    </span>
+                    <span>
+                      {isSub
+                        ? "Active"
+                        : done
+                          ? "—"
+                          : `Balance ${fmt(totalLeft(c))}`}
+                    </span>
                   </div>
 
                   {/* Actions */}
@@ -405,7 +485,7 @@ const totalCommit = useMemo(
                     <button
                       onClick={() => setModal(c)}
                       disabled={isDel}
-                      style={{ ...btn("#141414", done ? "#2a9d8f" : "#777"), fontSize: 10, padding: "4px 12px" }}
+                      style={{ ...btn("#141414", isSub ? SUB_COLOR : done ? "#2a9d8f" : "#777"), fontSize: 10, padding: "4px 12px" }}
                     >
                       Edit
                     </button>
@@ -423,7 +503,7 @@ const totalCommit = useMemo(
           </div>
 
           {/* ── Projection toggle ── */}
-          {/* {commitments.length > 0 && (
+          {commitments.length > 0 && (
             <>
               <button
                 onClick={() => setShowProj((v) => !v)}
@@ -433,22 +513,7 @@ const totalCommit = useMemo(
               </button>
               {showProj && <Projection commitments={commitments} salary={safeSalary} />}
             </>
-          )} */}
-
-          {/* ── Directus setup guide ── */}
-          {/* <div style={{ marginTop: 36, background: "#0e0e0e", border: "1px solid #141414", borderRadius: 12, padding: 18, fontFamily: mono }}>
-            <p style={{ ...labelStyle, marginBottom: 10 }}>Directus Setup Guide</p>
-            {[
-              ["commitments collection", "Fields: name (string), amount (decimal), last_date (date), color (string). Enable user_created auto-field."],
-              ["user_profiles collection", "Fields: user (M2O → directus_users), salary (decimal, nullable)."],
-              ["Permissions", "commitments: filter user_created = $CURRENT_USER for all CRUD. user_profiles: filter user = $CURRENT_USER."],
-            ].map(([title, desc]) => (
-              <div key={title} style={{ marginBottom: 12 }}>
-                <p style={{ fontSize: 10, color: "#e76f51", marginBottom: 3 }}>{title}</p>
-                <p style={{ fontSize: 10, color: "#444", lineHeight: 1.7 }}>{desc}</p>
-              </div>
-            ))}
-          </div> */}
+          )}
 
         </div>
       )}

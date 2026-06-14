@@ -6,8 +6,8 @@
 import { useState } from "react";
 import { Commitment, CommitmentForm, CommitmentFieldErrors } from "../types";
 import {
-  btn, mono, CMT_COLORS, labelStyle,
-  todayISO, formatLastDate, monthsLeft, fmt,
+  btn, mono, CMT_COLORS, labelStyle, SUB_COLOR,
+  formatLastDate, monthsLeft, fmt,
 } from "../lib/utils";
 
 interface CommitmentModalProps {
@@ -25,19 +25,24 @@ export default function CommitmentModal({
 }: CommitmentModalProps) {
   const [form, setForm] = useState<CommitmentForm>(
     item
-      ? { ...item, color: item.color || "#e76f51" }
-      : { name: "", amount: "", last_date: "", color: "#e76f51" }
+      ? {
+          ...item,
+          color:           item.color || "#e76f51",
+          is_subscription: item.is_subscription ?? false,
+          last_date:       item.last_date || "",
+        }
+      : { name: "", amount: "", last_date: "", is_subscription: false, color: "#e76f51" }
   );
   const [err, setErr] = useState<CommitmentFieldErrors>({});
 
   const set = <K extends keyof CommitmentForm>(k: K, v: CommitmentForm[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
 
-  // Preview calculated values from the picked date
-  const previewMonths = form.last_date
+  // Preview — only relevant for fixed-end commitments
+  const previewMonths = !form.is_subscription && form.last_date
     ? (() => {
-        const end = new Date(form.last_date);
-        const now = new Date();
+        const end  = new Date(form.last_date);
+        const now  = new Date();
         const diff =
           (end.getFullYear() - now.getFullYear()) * 12 +
           (end.getMonth() - now.getMonth());
@@ -52,19 +57,10 @@ export default function CommitmentModal({
 
   const validate = (): boolean => {
     const e: CommitmentFieldErrors = {};
-    if (!String(form.name).trim())              e.name      = "Required";
-    if (!form.amount || Number(form.amount) <= 0) e.amount  = "Enter a valid amount";
-    if (!form.last_date)                         e.last_date = "Pick a last payment date";
-    else {
-      const end = new Date(form.last_date);
-      const now = new Date();
-      if (
-        end.getFullYear() < now.getFullYear() ||
-        (end.getFullYear() === now.getFullYear() && end.getMonth() < now.getMonth())
-      ) {
-        // allow past dates (already completed commitments) — just no error
-      }
-    }
+    if (!String(form.name).trim())                e.name   = "Required";
+    if (!form.amount || Number(form.amount) <= 0) e.amount = "Enter a valid amount";
+    // last_date only required for non-subscription
+    if (!form.is_subscription && !form.last_date) e.last_date = "Pick a last payment date";
     setErr(e);
     return Object.keys(e).length === 0;
   };
@@ -73,7 +69,8 @@ export default function CommitmentModal({
     if (!validate()) return;
     onSave({
       ...form,
-      amount: parseFloat(String(form.amount)),
+      amount:    parseFloat(String(form.amount)),
+      last_date: form.is_subscription ? undefined : form.last_date,
     });
   };
 
@@ -92,13 +89,14 @@ export default function CommitmentModal({
           background: "#0e0e0e", border: "1px solid #222", borderRadius: 14,
           padding: 28, width: 340, fontFamily: mono,
           animation: "slideUp .2s ease",
+          maxHeight: "90vh", overflowY: "auto",
         }}
       >
         <p style={{ ...labelStyle, marginBottom: 18 }}>
           {item ? "Edit" : "New"} Commitment
         </p>
 
-        {/* Name */}
+        {/* ── Name ── */}
         <div style={{ marginBottom: 14 }}>
           <p style={{
             fontSize: 10, color: err.name ? "#e76f51" : "#444",
@@ -108,7 +106,7 @@ export default function CommitmentModal({
           </p>
           <input
             type="text"
-            placeholder="e.g. Car Loan"
+            placeholder="e.g. Netflix, Car Loan"
             value={form.name}
             onChange={(e) => { set("name", e.target.value); setErr((er) => ({ ...er, name: undefined })); }}
             style={{
@@ -121,7 +119,7 @@ export default function CommitmentModal({
           />
         </div>
 
-        {/* Monthly Amount */}
+        {/* ── Monthly Amount ── */}
         <div style={{ marginBottom: 14 }}>
           <p style={{
             fontSize: 10, color: err.amount ? "#e76f51" : "#444",
@@ -144,33 +142,81 @@ export default function CommitmentModal({
           />
         </div>
 
-        {/* Last Payment Date */}
+        {/* ── Payment Type Toggle ── */}
         <div style={{ marginBottom: 14 }}>
           <p style={{
-            fontSize: 10, color: err.last_date ? "#e76f51" : "#444",
-            marginBottom: 4, letterSpacing: 1, textTransform: "uppercase",
+            fontSize: 10, color: "#444", marginBottom: 8,
+            letterSpacing: 1, textTransform: "uppercase",
           }}>
-            Last Payment Date{err.last_date ? ` — ${err.last_date}` : ""}
+            Payment Type
           </p>
-          <input
-            type="date"
-            value={form.last_date}
-            onChange={(e) => { set("last_date", e.target.value); setErr((er) => ({ ...er, last_date: undefined })); }}
-            style={{
-              width: "100%", background: "#0a0a0a",
-              border: `1px solid ${err.last_date ? "#e76f51" : "#1e1e1e"}`,
-              borderRadius: 6, color: form.last_date ? "#f0ede8" : "#555",
-              fontSize: 13, padding: "9px 12px", boxSizing: "border-box",
-              fontFamily: mono, outline: "none", colorScheme: "dark",
-            }}
-          />
-          <p style={{ fontSize: 9, color: "#333", marginTop: 4, letterSpacing: .5 }}>
-            Pick the month of your final payment
+          <div style={{ display: "flex", gap: 8 }}>
+            {/* Fixed end date */}
+            <button
+              onClick={() => { set("is_subscription", false); }}
+              style={{
+                flex: 1, padding: "9px 0", borderRadius: 6, fontSize: 11,
+                fontFamily: mono, cursor: "pointer",
+                border: `1px solid ${!form.is_subscription ? "#e76f51" : "#1e1e1e"}`,
+                background: !form.is_subscription ? "#1a0a08" : "#0a0a0a",
+                color: !form.is_subscription ? "#e76f51" : "#555",
+                transition: "all .15s",
+              }}
+            >
+              Fixed End Date
+            </button>
+            {/* Subscription / until stopped */}
+            <button
+              onClick={() => { set("is_subscription", true); set("last_date", ""); setErr((er) => ({ ...er, last_date: undefined })); }}
+              style={{
+                flex: 1, padding: "9px 0", borderRadius: 6, fontSize: 11,
+                fontFamily: mono, cursor: "pointer",
+                border: `1px solid ${form.is_subscription ? SUB_COLOR : "#1e1e1e"}`,
+                background: form.is_subscription ? "#120a1a" : "#0a0a0a",
+                color: form.is_subscription ? SUB_COLOR : "#555",
+                transition: "all .15s",
+              }}
+            >
+              ∞ Until I Stop
+            </button>
+          </div>
+          <p style={{ fontSize: 9, color: "#2a2a2a", marginTop: 6, letterSpacing: .5 }}>
+            {form.is_subscription
+              ? "No end date — stays active until you remove it (e.g. Netflix, Spotify)"
+              : "Commitment ends on a specific month (e.g. car loan, personal loan)"}
           </p>
         </div>
 
-        {/* Live preview */}
-        {previewMonths !== null && (
+        {/* ── Last Payment Date — hidden for subscriptions ── */}
+        {!form.is_subscription && (
+          <div style={{ marginBottom: 14 }}>
+            <p style={{
+              fontSize: 10, color: err.last_date ? "#e76f51" : "#444",
+              marginBottom: 4, letterSpacing: 1, textTransform: "uppercase",
+            }}>
+              Last Payment Date{err.last_date ? ` — ${err.last_date}` : ""}
+            </p>
+            <input
+              type="date"
+              value={form.last_date || ""}
+              onChange={(e) => { set("last_date", e.target.value); setErr((er) => ({ ...er, last_date: undefined })); }}
+              style={{
+                width: "100%", background: "#0a0a0a",
+                border: `1px solid ${err.last_date ? "#e76f51" : "#1e1e1e"}`,
+                borderRadius: 6,
+                color: form.last_date ? "#f0ede8" : "#555",
+                fontSize: 13, padding: "9px 12px", boxSizing: "border-box",
+                fontFamily: mono, outline: "none", colorScheme: "dark",
+              }}
+            />
+            <p style={{ fontSize: 9, color: "#333", marginTop: 4, letterSpacing: .5 }}>
+              Pick the month of your final payment
+            </p>
+          </div>
+        )}
+
+        {/* ── Live Preview — only for fixed-end ── */}
+        {!form.is_subscription && previewMonths !== null && (
           <div style={{
             background: "#0a0a0a", border: "1px solid #1a1a1a",
             borderRadius: 8, padding: "10px 12px", marginBottom: 16,
@@ -195,7 +241,33 @@ export default function CommitmentModal({
           </div>
         )}
 
-        {/* Color picker */}
+        {/* ── Subscription live info ── */}
+        {form.is_subscription && form.amount && Number(form.amount) > 0 && (
+          <div style={{
+            background: "#120a1a", border: `1px solid ${SUB_COLOR}22`,
+            borderRadius: 8, padding: "10px 12px", marginBottom: 16,
+            display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8,
+          }}>
+            <div>
+              <p style={{ fontSize: 9, color: "#333", letterSpacing: 1, textTransform: "uppercase", marginBottom: 2 }}>
+                Monthly Cost
+              </p>
+              <p style={{ fontSize: 13, color: SUB_COLOR, fontWeight: 500 }}>
+                {fmt(Number(form.amount))}
+              </p>
+            </div>
+            <div>
+              <p style={{ fontSize: 9, color: "#333", letterSpacing: 1, textTransform: "uppercase", marginBottom: 2 }}>
+                Yearly Cost
+              </p>
+              <p style={{ fontSize: 13, color: SUB_COLOR, fontWeight: 500 }}>
+                {fmt(Number(form.amount) * 12)}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* ── Color picker ── */}
         <div style={{ marginBottom: 20 }}>
           <p style={{
             fontSize: 10, color: "#444", marginBottom: 8,
@@ -221,7 +293,7 @@ export default function CommitmentModal({
           </div>
         </div>
 
-        {/* Actions */}
+        {/* ── Actions ── */}
         <div style={{ display: "flex", gap: 10 }}>
           <button
             onClick={onClose}
@@ -233,7 +305,7 @@ export default function CommitmentModal({
           <button
             onClick={submit}
             disabled={loading}
-            style={{ ...btn("#e76f51", "#fff"), flex: 1, padding: "10px 0" }}
+            style={{ ...btn(form.is_subscription ? "#120a1a" : "#e76f51", form.is_subscription ? SUB_COLOR : "#fff"), flex: 1, padding: "10px 0", border: form.is_subscription ? `1px solid ${SUB_COLOR}44` : "none" }}
           >
             {loading ? "Saving…" : "Save"}
           </button>

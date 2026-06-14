@@ -12,13 +12,12 @@ export function parseLastDate(last_date: string): Date {
   return new Date(y, m - 1, d || 1);
 }
 
-/** Months remaining from today until last_date (inclusive). 0 if reached/passed. */
+/** Months remaining from today until last_date. 0 if subscription or reached/passed. */
 export function monthsLeft(c: Commitment): number {
-  if (!c.last_date) return 0;
-  const end   = parseLastDate(c.last_date);
-  const now   = new Date();
-  // compare year+month only
-  const diff  =
+  if (c.is_subscription || !c.last_date) return 0;
+  const end  = parseLastDate(c.last_date);
+  const now  = new Date();
+  const diff =
     (end.getFullYear() - now.getFullYear()) * 12 +
     (end.getMonth() - now.getMonth());
   return Math.max(diff, 0);
@@ -26,18 +25,21 @@ export function monthsLeft(c: Commitment): number {
 
 /** Total months from today to last_date (can be negative if past) */
 export function totalMonths(c: Commitment): number {
-  if (!c.last_date) return 0;
-  const end  = parseLastDate(c.last_date);
-  const now  = new Date();
+  if (c.is_subscription || !c.last_date) return 0;
+  const end = parseLastDate(c.last_date);
+  const now = new Date();
   return (
     (end.getFullYear() - now.getFullYear()) * 12 +
     (end.getMonth() - now.getMonth())
   );
 }
 
-/** Whether the commitment has reached or passed its last payment month */
+/**
+ * Whether the commitment has reached or passed its last payment month.
+ * Subscriptions are NEVER completed — they stay active until manually removed.
+ */
 export function isCompleted(c: Commitment): boolean {
-  if (!c.last_date) return false;
+  if (c.is_subscription || !c.last_date) return false;
   const end = parseLastDate(c.last_date);
   const now = new Date();
   return (
@@ -46,11 +48,11 @@ export function isCompleted(c: Commitment): boolean {
   );
 }
 
-/** Remaining balance = amount × months left */
+/** Remaining balance = amount × months left. 0 for subscriptions (no end date). */
 export const totalLeft = (c: Commitment) => (c.amount || 0) * monthsLeft(c);
 
 /** Format a date string as "Jan 2027" */
-export function formatLastDate(last_date: string): string {
+export function formatLastDate(last_date?: string): string {
   if (!last_date) return "—";
   const d = parseLastDate(last_date);
   return d.toLocaleString("en-MY", { month: "short", year: "numeric" });
@@ -73,24 +75,16 @@ export const errMsg = (e: unknown) =>
   e instanceof Error ? e.message : String(e);
 
 // ── Debounce hook ─────────────────────────────────────────────────────────────
-// Uses a ref for the callback so it always calls the latest version of `fn`
-// without needing it in the dependency array — prevents stale closure NaN bugs.
-export function useDebounce<T extends (...args: any[]) => void>(
-  fn: T,
-  delay: number
-) {
+export function useDebounce<T extends (...args: any[]) => void>(fn: T, delay: number) {
   const fnRef = useRef<T>(fn);
   const t     = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Keep the ref current on every render
   fnRef.current = fn;
-
   return useCallback(
     (...args: Parameters<T>) => {
       if (t.current) clearTimeout(t.current);
       t.current = setTimeout(() => fnRef.current(...args), delay);
     },
-    [delay] // only delay matters — fn is always fresh via ref
+    [delay]
   );
 }
 
@@ -161,6 +155,7 @@ export const globalCss = `
   }
   @keyframes spin { to { transform:rotate(360deg); } }
   @keyframes pulse { 0%,100% { opacity:.4; } 50% { opacity:.8; } }
+  @keyframes subPulse { 0%,100% { opacity:.5; } 50% { opacity:1; } }
 `;
 
 // ── Accent palette for module cards ──────────────────────────────────────────
@@ -174,3 +169,6 @@ export const CMT_COLORS = [
   "#e76f51","#f4a261","#e9c46a","#2a9d8f",
   "#264653","#a8dadc","#c77dff","#48cae4",
 ];
+
+// ── Subscription accent ───────────────────────────────────────────────────────
+export const SUB_COLOR = "#c77dff";

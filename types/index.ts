@@ -12,15 +12,17 @@ export type Commitment = {
   id: number | string;
   name: string;
   amount: number;
-  last_date: string;   // "YYYY-MM-DD" — replaces months + paid
+  last_date?: string;        // "YYYY-MM-DD" — optional for subscriptions
+  is_subscription: boolean;  // true = no end date ("Until I said so")
   color?: string;
 };
- 
+
 export type CommitmentForm = {
   id?: number | string;
   name: string;
   amount: number | string;
-  last_date: string;   // date picker value
+  last_date?: string;
+  is_subscription: boolean;
   color: string;
 };
 
@@ -53,6 +55,7 @@ export type ModalState = Commitment | "add" | null;
 export type CommitmentFieldErrors = Partial<
   Record<"name" | "amount" | "last_date", string | undefined>
 >;
+
 export type LoginErrors = Partial<{
   email: string;
   password: string;
