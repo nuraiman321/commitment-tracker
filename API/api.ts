@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { Commitment } from "../types";
 
-export const DEFAULT_BASE_URL = "https://ai-enterpise.up.railway.app";
+export const DEFAULT_BASE_URL = "https://ai-enterprise.up.railway.app";
 
 export interface MakeApiOptions {
   onUnauthorized?: () => void;
