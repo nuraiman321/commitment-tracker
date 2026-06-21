@@ -15,6 +15,7 @@ export type Commitment = {
   last_date?: string;        // "YYYY-MM-DD" — optional for subscriptions
   is_subscription: boolean;  // true = no end date ("Until I said so")
   color?: string;
+  icon?: string;              // key from COMMITMENT_ICONS, e.g. "grab", "bank", "education"
 };
 
 export type CommitmentForm = {
@@ -24,6 +25,15 @@ export type CommitmentForm = {
   last_date?: string;
   is_subscription: boolean;
   color: string;
+  icon?: string;
+};
+
+// ── Payment tracking ──────────────────────────────────────────────────────────
+export type CommitmentPayment = {
+  id: number | string;
+  commitment: number | string;   // M2O → commitments_ai
+  month: string;                 // "YYYY-MM-01"
+  paid_at?: string;               // auto datetime from Directus
 };
 
 export type Module = {
@@ -51,6 +61,7 @@ export type DirectusUser = {
 
 export type ToastState = { msg: string; type: "ok" | "err" } | null;
 export type ModalState = Commitment | "add" | null;
+export type PayModalState = Commitment | null;
 
 export type CommitmentFieldErrors = Partial<
   Record<"name" | "amount" | "last_date", string | undefined>

@@ -3,16 +3,19 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // COMMITMENT TRACKER PAGE
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState, useEffect, useMemo } from "react";
-import { Commitment, CommitmentForm, ModalState, ToastState } from "../types";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { Commitment, CommitmentForm, CommitmentPayment, ModalState, PayModalState, ToastState } from "../types";
 import { ApiClient } from "../API/api";
 import {
   monthsLeft, totalLeft, fmt, errMsg,
   useDebounce, btn, mono, sans, labelStyle,
-  formatLastDate, isCompleted, SUB_COLOR,
+  formatLastDate, isCompleted, SUB_COLOR, PAID_COLOR,
+  expectedMonths, nextDueMonth, formatMonthKey, currentMonthKey,
 } from "../lib/utils";
 import { Toast, PieChart, ProgressBar, Spinner } from "./ui";
 import CommitmentModal from "./CommitmentModal";
+import PayModal from "./PayModal";
+import { CommitmentIcon } from "./commitmentIcons";
 
 // ── Projection Table ──────────────────────────────────────────────────────────
 function Projection({
@@ -53,7 +56,6 @@ function Projection({
               const label     = d.toLocaleString("en-MY", { month: "short", year: "2-digit" });
 
               const total = commitments.reduce((s: number, c: Commitment) => {
-                // Subscriptions are always active every month
                 if (c.is_subscription) return s + c.amount;
                 if (!c.last_date) return s;
                 const end      = new Date(c.last_date);
@@ -94,11 +96,13 @@ interface CommitmentPageProps {
 
 export default function CommitmentPage({ api, onBack }: CommitmentPageProps) {
   const [commitments, setCommitments] = useState<Commitment[]>([]);
+  const [payments,    setPayments]    = useState<CommitmentPayment[]>([]); // ALL payments for this user
   const [salary,      setSalary]      = useState<number>(0);
   const [profileId,   setProfileId]   = useState<number | string | null>(null);
   const [userId,      setUserId]      = useState<number | string | null>(null);
   const [dataLoad,    setDataLoad]    = useState(true);
   const [modal,       setModal]       = useState<ModalState>(null);
+  const [payModal,    setPayModal]    = useState<PayModalState>(null);
   const [saving,      setSaving]      = useState(false);
   const [delId,       setDelId]       = useState<number | string | null>(null);
   const [showProj,    setShowProj]    = useState(false);
@@ -114,9 +118,10 @@ export default function CommitmentPage({ api, onBack }: CommitmentPageProps) {
       const me = await api.me();
       setUserId(me.data.id);
 
-      const [cmtRes, profRes] = await Promise.all([
+      const [cmtRes, profRes, payRes] = await Promise.all([
         api.getCommitments(),
         api.getProfile(me.data.id),
+        api.getAllPayments(),
       ]);
 
       setCommitments(
@@ -124,8 +129,11 @@ export default function CommitmentPage({ api, onBack }: CommitmentPageProps) {
           ...c,
           amount:          Number(c.amount) || 0,
           is_subscription: Boolean(c.is_subscription),
+          icon:            c.icon || "generic",
         })) as Commitment[]
       );
+
+      setPayments((payRes.data || []) as CommitmentPayment[]);
 
       const prof = profRes.data?.[0];
       if (prof) {
@@ -138,6 +146,16 @@ export default function CommitmentPage({ api, onBack }: CommitmentPageProps) {
       setDataLoad(false);
     }
   };
+
+  // Refetch only the payments (used after PayModal mutations) — cheaper than full reload
+  const refreshPayments = useCallback(async () => {
+    try {
+      const res = await api.getAllPayments();
+      setPayments((res.data || []) as CommitmentPayment[]);
+    } catch (e) {
+      notify(errMsg(e), "err");
+    }
+  }, [api]);
 
   // ── Salary sync ───────────────────────────────────────────────────────────
   const syncSalary = async (val: number) => {
@@ -167,16 +185,30 @@ export default function CommitmentPage({ api, onBack }: CommitmentPageProps) {
         last_date:       form.is_subscription ? undefined : form.last_date,
         is_subscription: form.is_subscription,
         color:           form.color,
+        icon:            form.icon || "generic",
       };
       if (form.id) {
         const res = await api.updateCommitment(form.id, payload);
         setCommitments((cs) =>
-          cs.map((c) => c.id === form.id ? { ...res.data as Commitment, amount: Number((res.data as any).amount) || 0, is_subscription: Boolean((res.data as any).is_subscription) } : c)
+          cs.map((c) => c.id === form.id
+            ? {
+                ...res.data as Commitment,
+                amount: Number((res.data as any).amount) || 0,
+                is_subscription: Boolean((res.data as any).is_subscription),
+                icon: (res.data as any).icon || "generic",
+              }
+            : c
+          )
         );
         notify("Updated ✓");
       } else {
         const res = await api.createCommitment(payload);
-        const newItem = { ...res.data as Commitment, amount: Number((res.data as any).amount) || 0, is_subscription: Boolean((res.data as any).is_subscription) };
+        const newItem = {
+          ...res.data as Commitment,
+          amount: Number((res.data as any).amount) || 0,
+          is_subscription: Boolean((res.data as any).is_subscription),
+          icon: (res.data as any).icon || "generic",
+        };
         setCommitments((cs) => [newItem, ...cs]);
         notify("Commitment added ✓");
       }
@@ -201,8 +233,19 @@ export default function CommitmentPage({ api, onBack }: CommitmentPageProps) {
     }
   };
 
+  // ── Payments lookup per commitment ────────────────────────────────────────
+  const paymentsByCommitment = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const p of payments) {
+      const key = String(p.commitment);
+      const month = p.month.slice(0, 10);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(month);
+    }
+    return map;
+  }, [payments]);
+
   // ── Derived values ────────────────────────────────────────────────────────
-  // Subscriptions are always active; fixed-end only if not completed
   const totalCommit = useMemo(
     () => commitments
       .filter((c) => c.is_subscription || !isCompleted(c))
@@ -237,7 +280,6 @@ export default function CommitmentPage({ api, onBack }: CommitmentPageProps) {
     ],
   ];
 
-  // Counts for list header
   const completedCount    = commitments.filter(isCompleted).length;
   const subscriptionCount = commitments.filter((c) => c.is_subscription).length;
 
@@ -343,33 +385,17 @@ export default function CommitmentPage({ api, onBack }: CommitmentPageProps) {
           {/* ── Commitment cards ── */}
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {commitments.map((c, i) => {
-              const done           = isCompleted(c);
-              const isSub          = c.is_subscription;
-              const rem            = monthsLeft(c);
-              const isDel          = delId === c.id;
+              const done   = isCompleted(c);
+              const isSub  = c.is_subscription;
+              const rem    = monthsLeft(c);
+              const isDel  = delId === c.id;
 
-              // Color logic: subscription = purple, completed = green, active = own color
-              const cardAccent = isSub
-                ? SUB_COLOR
-                : done
-                  ? "#2a9d8f"
-                  : (c.color || "#e76f51");
+              const cardAccent = isSub ? SUB_COLOR : done ? "#2a9d8f" : (c.color || "#e76f51");
+              const cardBg     = isSub ? "#0d0814" : done ? "#081a13" : "#0e0e0e";
+              const cardBorder = isSub ? "#1a0d2e" : done ? "#0f2a1e" : "#141414";
 
-              const cardBg = isSub
-                ? "#0d0814"
-                : done
-                  ? "#081a13"
-                  : "#0e0e0e";
-
-              const cardBorder = isSub
-                ? "#1a0d2e"
-                : done
-                  ? "#0f2a1e"
-                  : "#141414";
-
-              // Progress bar value
               const paidPct = isSub
-                ? 100  // subscriptions show full pulsing bar
+                ? 100
                 : done
                   ? 100
                   : (() => {
@@ -383,6 +409,15 @@ export default function CommitmentPage({ api, onBack }: CommitmentPageProps) {
                       );
                       return Math.max(0, Math.min(100, ((full - rem) / full) * 100));
                     })();
+
+              // ── Per-commitment payment status ──────────────────────────────
+              const paidMonths = paymentsByCommitment.get(String(c.id)) || [];
+              const thisMonth  = currentMonthKey();
+              const isThisMonthPaid = paidMonths.includes(thisMonth);
+
+              const expected = expectedMonths(c, isSub ? 1 : undefined);
+              const nextDue  = nextDueMonth(expected, paidMonths);
+              const showNextMonthPreview = isThisMonthPaid && nextDue && nextDue !== thisMonth;
 
               return (
                 <div
@@ -399,47 +434,72 @@ export default function CommitmentPage({ api, onBack }: CommitmentPageProps) {
                 >
                   {/* Top row */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
-                    <div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
-                        <p style={{ fontWeight: 600, fontSize: 14, color: isSub ? SUB_COLOR : done ? "#2a9d8f" : "#f0ede8" }}>
-                          {c.name}
-                        </p>
-
-                        {/* SUB badge */}
-                        {isSub && (
-                          <span style={{
-                            fontSize: 9, color: SUB_COLOR, background: "#120a1a",
-                            border: `1px solid ${SUB_COLOR}44`, borderRadius: 4,
-                            padding: "1px 6px", fontFamily: mono, letterSpacing: 1,
-                          }}>
-                            ∞ SUB
-                          </span>
-                        )}
-
-                        {/* DONE badge — only for non-subscription */}
-                        {done && !isSub && (
-                          <span style={{
-                            fontSize: 9, color: "#2a9d8f", background: "#0f2a1e",
-                            border: "1px solid #2a9d8f33", borderRadius: 4,
-                            padding: "1px 6px", fontFamily: mono, letterSpacing: 1,
-                          }}>
-                            DONE
-                          </span>
-                        )}
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 10, flex: 1, minWidth: 0 }}>
+                      {/* Icon bubble */}
+                      <div style={{
+                        width: 32, height: 32, borderRadius: 9, flexShrink: 0,
+                        background: `${cardAccent}14`, border: `1px solid ${cardAccent}33`,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        marginTop: 1,
+                      }}>
+                        <CommitmentIcon iconKey={c.icon} size={16} color={cardAccent} />
                       </div>
 
-                      {/* Subtitle — until date or subscription label */}
-                      <p style={{ fontSize: 10, fontFamily: mono,
-                        color: isSub ? `${SUB_COLOR}88` : done ? "#2a9d8f88" : "#444" }}>
-                        {isSub
-                          ? "∞ Ongoing · no end date"
-                          : done
-                            ? `Completed ${formatLastDate(c.last_date)}`
-                            : `Until ${formatLastDate(c.last_date)} · ${rem} mo left`}
-                      </p>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2, flexWrap: "wrap" }}>
+                          <p style={{ fontWeight: 600, fontSize: 14, color: isSub ? SUB_COLOR : done ? "#2a9d8f" : "#f0ede8" }}>
+                            {c.name}
+                          </p>
+
+                          {isSub && (
+                            <span style={{
+                              fontSize: 9, color: SUB_COLOR, background: "#120a1a",
+                              border: `1px solid ${SUB_COLOR}44`, borderRadius: 4,
+                              padding: "1px 6px", fontFamily: mono, letterSpacing: 1,
+                            }}>
+                              ∞ SUB
+                            </span>
+                          )}
+
+                          {done && !isSub && (
+                            <span style={{
+                              fontSize: 9, color: "#2a9d8f", background: "#0f2a1e",
+                              border: "1px solid #2a9d8f33", borderRadius: 4,
+                              padding: "1px 6px", fontFamily: mono, letterSpacing: 1,
+                            }}>
+                              DONE
+                            </span>
+                          )}
+
+                          {!done && isThisMonthPaid && (
+                            <span style={{
+                              fontSize: 9, color: PAID_COLOR, background: "#0f2a1e",
+                              border: `1px solid ${PAID_COLOR}44`, borderRadius: 4,
+                              padding: "1px 6px", fontFamily: mono, letterSpacing: 1,
+                            }}>
+                              ✓ PAID
+                            </span>
+                          )}
+                        </div>
+
+                        <p style={{ fontSize: 10, fontFamily: mono,
+                          color: isSub ? `${SUB_COLOR}88` : done ? "#2a9d8f88" : "#444" }}>
+                          {isSub
+                            ? "∞ Ongoing · no end date"
+                            : done
+                              ? `Completed ${formatLastDate(c.last_date)}`
+                              : `Until ${formatLastDate(c.last_date)} · ${rem} mo left`}
+                        </p>
+
+                        {showNextMonthPreview && (
+                          <p style={{ fontSize: 9, color: "#444", fontFamily: mono, marginTop: 3 }}>
+                            Next due: <span style={{ color: cardAccent }}>{formatMonthKey(nextDue!)}</span>
+                          </p>
+                        )}
+                      </div>
                     </div>
 
-                    <div style={{ textAlign: "right" }}>
+                    <div style={{ textAlign: "right", flexShrink: 0 }}>
                       <p style={{ fontSize: 16, fontFamily: mono, fontWeight: 500, color: cardAccent }}>
                         {fmt(c.amount)}
                       </p>
@@ -448,7 +508,7 @@ export default function CommitmentPage({ api, onBack }: CommitmentPageProps) {
                     </div>
                   </div>
 
-                  {/* Progress bar — pulsing for subscriptions */}
+                  {/* Progress bar */}
                   <div style={{ position: "relative" }}>
                     <ProgressBar paid={paidPct} months={100} color={cardAccent} />
                     {isSub && (
@@ -472,16 +532,21 @@ export default function CommitmentPage({ api, onBack }: CommitmentPageProps) {
                           : `${rem} mo remaining`}
                     </span>
                     <span>
-                      {isSub
-                        ? "Active"
-                        : done
-                          ? "—"
-                          : `Balance ${fmt(totalLeft(c))}`}
+                      {isSub ? "Active" : done ? "—" : `Balance ${fmt(totalLeft(c))}`}
                     </span>
                   </div>
 
                   {/* Actions */}
                   <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                    {!done && (
+                      <button
+                        onClick={() => setPayModal(c)}
+                        disabled={isDel}
+                        style={{ ...btn(`${PAID_COLOR}1a`, PAID_COLOR), fontSize: 10, padding: "4px 12px", border: `1px solid ${PAID_COLOR}33` }}
+                      >
+                        💳 Pay
+                      </button>
+                    )}
                     <button
                       onClick={() => setModal(c)}
                       disabled={isDel}
@@ -518,13 +583,23 @@ export default function CommitmentPage({ api, onBack }: CommitmentPageProps) {
         </div>
       )}
 
-      {/* ── Modal ── */}
+      {/* ── Add / Edit Modal ── */}
       {modal && (
         <CommitmentModal
           item={modal === "add" ? null : (modal as Commitment)}
           onSave={handleSave}
           onClose={() => { if (!saving) setModal(null); }}
           loading={saving}
+        />
+      )}
+
+      {/* ── Pay Modal ── */}
+      {payModal && (
+        <PayModal
+          commitment={payModal}
+          api={api}
+          onClose={() => setPayModal(null)}
+          onChanged={refreshPayments}
         />
       )}
 

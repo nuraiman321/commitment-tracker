@@ -25,26 +25,35 @@ export function makeApi(
   });
 
   const req = async <T = any>(
-  method: string,
-  path: string,
-  body?: unknown
-): Promise<T> => {
-  const res = await fetch(`${baseUrl}${path}`, {
-    method,
-    headers: headers(),
-    body: body ? JSON.stringify(body) : undefined,
-  });
+    method: string,
+    path: string,
+    body?: unknown
+  ): Promise<T> => {
+    const res = await fetch(`${baseUrl}${path}`, {
+      method,
+      headers: headers(),
+      body: body ? JSON.stringify(body) : undefined,
+    });
 
-  // 204 No Content (e.g. DELETE) — no body to parse
-  if (res.status === 204) return undefined as T;
+    // 401/403 → notify the session owner so it can tear down auth state.
+    // Skip auth endpoints to avoid loops (bad creds, logout already tearing down).
+    if (
+      (res.status === 401 || res.status === 403) &&
+      !SKIP_UNAUTH_PATHS.some((p) => path.startsWith(p))
+    ) {
+      opts.onUnauthorized?.();
+    }
 
-  const json = await res.json();
-  if (!res.ok)
-    throw new Error(
-      json?.errors?.[0]?.message || json?.message || "Request failed"
-    );
-  return json;
-};
+    // 204 No Content (e.g. DELETE) — no body to parse
+    if (res.status === 204) return undefined as T;
+
+    const json = await res.json();
+    if (!res.ok)
+      throw new Error(
+        json?.errors?.[0]?.message || json?.message || "Request failed"
+      );
+    return json;
+  };
 
   return {
     // ── Auth ──────────────────────────────────────────────────────────────
@@ -92,6 +101,26 @@ export function makeApi(
 
     updateProfile: (id: number | string, salary: number) =>
       req("PATCH", `/items/user_profiles_ai/${id}`, { salary }),
+
+    // ── Commitment Payments ─────────────────────────────────────────────────
+    // One row = one paid month. No row = unpaid. Delete = undo.
+    getPayments: (commitmentId: number | string) =>
+      req(
+        "GET",
+        `/items/commitment_payments_ai?filter[commitment][_eq]=${commitmentId}&sort=month`
+      ),
+
+    getAllPayments: () =>
+      req(
+        "GET",
+        `/items/commitment_payments_ai?filter[commitment][user_created][_eq]=$CURRENT_USER&sort=month`
+      ),
+
+    markPaid: (commitmentId: number | string, month: string) =>
+      req("POST", "/items/commitment_payments_ai", { commitment: commitmentId, month }),
+
+    unmarkPaid: (paymentId: number | string) =>
+      req("DELETE", `/items/commitment_payments_ai/${paymentId}`, null),
   };
 }
 
