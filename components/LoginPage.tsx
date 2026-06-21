@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // LOGIN PAGE
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState, KeyboardEvent } from "react";
+import { useState, useMemo, KeyboardEvent } from "react";
 import { LoginErrors } from "../types";
 import { btn, fieldStyle, mono, sans } from "../lib/utils";
 
@@ -13,6 +13,9 @@ interface LoginPageProps {
   setBaseUrl: (u: string) => void;
 }
 
+// ── Email domain autocomplete ─────────────────────────────────────────────────
+const EMAIL_DOMAINS = ["gmail.com", "yahoo.com", "outlook.com", "hotmail.com"];
+
 export default function LoginPage({ onLogin, baseUrl, setBaseUrl }: LoginPageProps) {
   const [email,    setEmail]    = useState("");
   const [password, setPassword] = useState("");
@@ -21,6 +24,36 @@ export default function LoginPage({ onLogin, baseUrl, setBaseUrl }: LoginPagePro
   const [showUrl,  setShowUrl]  = useState(false);
   const [urlDraft, setUrlDraft] = useState(baseUrl);
   const [showPass, setShowPass] = useState(false);
+
+  // Email autocomplete state
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [highlightIdx,    setHighlightIdx]    = useState(0);
+
+  // Suggestions only appear once user has typed something before "@"
+  // and hasn't already typed a domain themselves.
+  const suggestions = useMemo(() => {
+    if (!email) return [];
+    const atIdx = email.indexOf("@");
+    if (atIdx === -1) {
+      // No "@" yet — suggest full "user@domain.com" completions
+      return EMAIL_DOMAINS.map((d) => `${email}@${d}`);
+    }
+    const typedDomain = email.slice(atIdx + 1);
+    if (!typedDomain) {
+      // Just typed "@" — show all domain options
+      return EMAIL_DOMAINS.map((d) => `${email}${d}`);
+    }
+    // User is typing a domain — filter matching ones
+    const matches = EMAIL_DOMAINS.filter((d) => d.startsWith(typedDomain.toLowerCase()));
+    if (matches.length === 0) return []; // user typed their own domain — don't interfere
+    return matches.map((d) => `${email.slice(0, atIdx + 1)}${d}`);
+  }, [email]);
+
+  const applySuggestion = (value: string) => {
+    setEmail(value);
+    setShowSuggestions(false);
+    setErrors((er) => ({ ...er, email: undefined, server: undefined }));
+  };
 
   const validate = (): boolean => {
     const e: LoginErrors = {};
@@ -39,7 +72,6 @@ export default function LoginPage({ onLogin, baseUrl, setBaseUrl }: LoginPagePro
   const submit = async () => {
     if (!validate()) return;
     setLoading(true);
-    console.log("login");
 
     try {
       await onLogin(email, password);
@@ -51,7 +83,32 @@ export default function LoginPage({ onLogin, baseUrl, setBaseUrl }: LoginPagePro
     }
   };
 
-  const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
+  const onEmailKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (showSuggestions && suggestions.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setHighlightIdx((i) => (i + 1) % suggestions.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setHighlightIdx((i) => (i - 1 + suggestions.length) % suggestions.length);
+        return;
+      }
+      if (e.key === "Tab" || e.key === "Enter") {
+        e.preventDefault();
+        applySuggestion(suggestions[highlightIdx]);
+        return;
+      }
+      if (e.key === "Escape") {
+        setShowSuggestions(false);
+        return;
+      }
+    }
+    if (e.key === "Enter") submit();
+  };
+
+  const onPasswordKey = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") submit();
   };
 
@@ -203,8 +260,8 @@ export default function LoginPage({ onLogin, baseUrl, setBaseUrl }: LoginPagePro
 
         {/* Form fields */}
         <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 20 }}>
-          {/* Email */}
-          <div>
+          {/* Email — with domain autocomplete */}
+          <div style={{ position: "relative" }}>
             <p
               style={{
                 fontSize: 10,
@@ -221,13 +278,51 @@ export default function LoginPage({ onLogin, baseUrl, setBaseUrl }: LoginPagePro
               type="email"
               value={email}
               placeholder="you@example.com"
+              autoComplete="off"
               onChange={(e) => {
                 setEmail(e.target.value);
                 setErrors((er) => ({ ...er, email: undefined, server: undefined }));
+                setShowSuggestions(true);
+                setHighlightIdx(0);
               }}
-              onKeyDown={onKey}
+              onFocus={() => { if (email) setShowSuggestions(true); }}
+              onBlur={() => {
+                // slight delay so a click on a suggestion still registers
+                setTimeout(() => setShowSuggestions(false), 120);
+              }}
+              onKeyDown={onEmailKey}
               style={fieldStyle(!!errors.email)}
             />
+
+            {/* Suggestion dropdown */}
+            {showSuggestions && suggestions.length > 0 && (
+              <div
+                style={{
+                  position: "absolute", top: "100%", left: 0, right: 0,
+                  marginTop: 4, background: "#0e0e0e", border: "1px solid #1e1e1e",
+                  borderRadius: 8, overflow: "hidden", zIndex: 30,
+                  boxShadow: "0 8px 24px rgba(0,0,0,.5)",
+                }}
+              >
+                {suggestions.map((s, i) => (
+                  <div
+                    key={s}
+                    onMouseDown={(e) => { e.preventDefault(); applySuggestion(s); }}
+                    onMouseEnter={() => setHighlightIdx(i)}
+                    style={{
+                      padding: "9px 12px", fontSize: 12, fontFamily: mono,
+                      cursor: "pointer",
+                      background: i === highlightIdx ? "#1a0a08" : "transparent",
+                      color: i === highlightIdx ? "#e76f51" : "#999",
+                      borderBottom: i < suggestions.length - 1 ? "1px solid #161616" : "none",
+                      transition: "background .1s, color .1s",
+                    }}
+                  >
+                    {s}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Password */}
@@ -253,7 +348,7 @@ export default function LoginPage({ onLogin, baseUrl, setBaseUrl }: LoginPagePro
                   setPassword(e.target.value);
                   setErrors((er) => ({ ...er, password: undefined, server: undefined }));
                 }}
-                onKeyDown={onKey}
+                onKeyDown={onPasswordKey}
                 style={{ ...fieldStyle(!!errors.password), paddingRight: 44 }}
               />
               <button
