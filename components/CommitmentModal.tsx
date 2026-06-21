@@ -9,6 +9,7 @@ import {
   btn, mono, CMT_COLORS, labelStyle, SUB_COLOR,
   formatLastDate, monthsLeft, fmt,
 } from "../lib/utils";
+import IconPicker from "./IconPicker";
 
 interface CommitmentModalProps {
   item: Commitment | null;
@@ -30,8 +31,9 @@ export default function CommitmentModal({
           color:           item.color || "#e76f51",
           is_subscription: item.is_subscription ?? false,
           last_date:       item.last_date || "",
+          icon:            item.icon || "generic",
         }
-      : { name: "", amount: "", last_date: "", is_subscription: false, color: "#e76f51" }
+      : { name: "", amount: "", last_date: "", is_subscription: false, color: "#e76f51", icon: "generic" }
   );
   const [err, setErr] = useState<CommitmentFieldErrors>({});
 
@@ -71,6 +73,7 @@ export default function CommitmentModal({
       ...form,
       amount:    parseFloat(String(form.amount)),
       last_date: form.is_subscription ? undefined : form.last_date,
+      icon:      form.icon || "generic",
     });
   };
 
@@ -106,7 +109,7 @@ export default function CommitmentModal({
           </p>
           <input
             type="text"
-            placeholder="e.g. Netflix, Car Loan"
+            placeholder="e.g. Netflix, Car Loan, Maybank Loan"
             value={form.name}
             onChange={(e) => { set("name", e.target.value); setErr((er) => ({ ...er, name: undefined })); }}
             style={{
@@ -118,6 +121,9 @@ export default function CommitmentModal({
             }}
           />
         </div>
+
+        {/* ── Icon Picker ── */}
+        <IconPicker value={form.icon} onChange={(key: string) => set("icon", key)} />
 
         {/* ── Monthly Amount ── */}
         <div style={{ marginBottom: 14 }}>

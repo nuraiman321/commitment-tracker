@@ -35,17 +35,16 @@ export function totalMonths(c: Commitment): number {
 }
 
 /**
- * Whether the commitment has reached or passed its last payment month.
+ * Whether the commitment has reached or passed its last payment date (exact day).
  * Subscriptions are NEVER completed — they stay active until manually removed.
  */
 export function isCompleted(c: Commitment): boolean {
   if (c.is_subscription || !c.last_date) return false;
   const end = parseLastDate(c.last_date);
   const now = new Date();
-  return (
-    now.getFullYear() > end.getFullYear() ||
-    (now.getFullYear() === end.getFullYear() && now.getMonth() >= end.getMonth())
-  );
+  end.setHours(0, 0, 0, 0);
+  now.setHours(0, 0, 0, 0);
+  return now.getTime() >= end.getTime();
 }
 
 /** Remaining balance = amount × months left. 0 for subscriptions (no end date). */
@@ -62,6 +61,70 @@ export function formatLastDate(last_date?: string): string {
 export function todayISO(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+}
+
+// ── Payment-month helpers ──────────────────────────────────────────────────────
+
+/** Returns "YYYY-MM-01" for a given Date, normalized to the 1st of the month */
+export function toMonthKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+}
+
+/** Returns "YYYY-MM-01" for the current month */
+export function currentMonthKey(): string {
+  return toMonthKey(new Date());
+}
+
+/**
+ * List of expected month keys for a commitment, starting at the current month.
+ * - Fixed-end commitments: up to and including last_date's month.
+ * - Subscriptions: no fixed end, so generate `monthsAhead` months from now
+ *   (minimum 1) — used to let the user pre-pay a few months in advance.
+ */
+export function expectedMonths(c: Commitment, monthsAhead = 1): string[] {
+  const now   = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  if (c.is_subscription) {
+    const count = Math.max(monthsAhead, 1);
+    return Array.from({ length: count }, (_, i) => {
+      const d = new Date(start);
+      d.setMonth(d.getMonth() + i);
+      return toMonthKey(d);
+    });
+  }
+
+  if (!c.last_date) return [];
+  const end = parseLastDate(c.last_date);
+  const totalSpan =
+    (end.getFullYear() - start.getFullYear()) * 12 +
+    (end.getMonth() - start.getMonth());
+
+  if (totalSpan < 0) return []; // already past last_date
+
+  return Array.from({ length: totalSpan + 1 }, (_, i) => {
+    const d = new Date(start);
+    d.setMonth(d.getMonth() + i);
+    return toMonthKey(d);
+  });
+}
+
+/** Given expected months and paid months, return the unpaid ones in order */
+export function unpaidMonths(expected: string[], paid: string[]): string[] {
+  const paidSet = new Set(paid);
+  return expected.filter((m) => !paidSet.has(m));
+}
+
+/** The earliest month not yet paid — null if everything is paid */
+export function nextDueMonth(expected: string[], paid: string[]): string | null {
+  const unpaid = unpaidMonths(expected, paid);
+  return unpaid.length > 0 ? unpaid[0] : null;
+}
+
+/** Format a "YYYY-MM-01" key as "Jun 2026" for display */
+export function formatMonthKey(monthKey: string): string {
+  const d = parseLastDate(monthKey);
+  return d.toLocaleString("en-MY", { month: "short", year: "numeric" });
 }
 
 export const fmt = (n: number) =>
@@ -156,6 +219,7 @@ export const globalCss = `
   @keyframes spin { to { transform:rotate(360deg); } }
   @keyframes pulse { 0%,100% { opacity:.4; } 50% { opacity:.8; } }
   @keyframes subPulse { 0%,100% { opacity:.5; } 50% { opacity:1; } }
+  @keyframes checkPop { 0% { transform:scale(0.6); opacity:0; } 100% { transform:scale(1); opacity:1; } }
 `;
 
 // ── Accent palette for module cards ──────────────────────────────────────────
@@ -172,3 +236,6 @@ export const CMT_COLORS = [
 
 // ── Subscription accent ───────────────────────────────────────────────────────
 export const SUB_COLOR = "#c77dff";
+
+// ── Paid accent ────────────────────────────────────────────────────────────────
+export const PAID_COLOR = "#2a9d8f";
